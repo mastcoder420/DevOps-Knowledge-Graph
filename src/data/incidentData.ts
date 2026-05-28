@@ -1,117 +1,94 @@
-export interface Incident {
+export interface HistoricalPostMortem {
   incident_id: string;
-  impacted_service: string;
-  dependencies: string[];
-  root_cause_summary: string;
-  error_stack_trace: string;
-  resolution_steps: string[];
-  severity: "CRITICAL" | "WARNING" | "INFO";
-  timestamp: string;
+  company: string;
+  title: string;
+  date: string;
+  symptoms: string;
+  root_cause: string;
+  resolution: string;
+  remediation_commands: string[];
+  severity: "CRITICAL" | "MAJOR";
 }
 
-export const microservices = [
-  { id: "api-gateway", name: "API Gateway", status: "healthy", host: "10.0.1.10", role: "Load Balancing & Routing" },
-  { id: "auth-service", name: "Authentication Service", status: "healthy", host: "10.0.1.12", role: "Session & Token Manager" },
-  { id: "payment-service", name: "Payment Service", status: "healthy", host: "10.0.1.15", role: "Checkout & Bank Ingestion" },
-  { id: "redis-cache", name: "Redis Session Cache", status: "healthy", host: "10.0.2.3", role: "InMemory Fast Lookup" },
-  { id: "user-db", name: "User DB (PostgreSQL)", status: "healthy", host: "10.0.3.50", role: "Primary Auth & User Store" },
-  { id: "payment-db", name: "Payment DB (PostgreSQL)", status: "healthy", host: "10.0.3.60", role: "Ledger Transaction Storage" },
-];
-
-export const serviceDependencies = [
-  { from: "api-gateway", to: "auth-service" },
-  { from: "api-gateway", to: "payment-service" },
-  { from: "auth-service", to: "redis-cache" },
-  { from: "auth-service", to: "user-db" },
-  { from: "payment-service", to: "redis-cache" },
-  { from: "payment-service", to: "payment-db" },
-];
-
-export const mockIncidents: Incident[] = [
+export const postMortemsDatabase: HistoricalPostMortem[] = [
   {
-    incident_id: "INC-8021",
-    impacted_service: "user-db",
-    dependencies: ["auth-service", "api-gateway"],
-    severity: "CRITICAL",
-    timestamp: "2026-05-27T18:42:00Z",
-    root_cause_summary: "High traffic surge during marketing campaign led to a spike in parallel login request processing. The max connection limit in user-db (PostgreSQL) connection pool was capped at 50, causing subsequent connection requests to block and time out with 504 Gateway Timeout at the API Gateway level.",
-    error_stack_trace: `FATAL: remaining connection slots are reserved for non-replication superuser connections
-at Pool.connect (/app/node_modules/pg/lib/pool.js:203:11)
-at ConnectionPool.acquire (/app/src/db.ts:42:24)
-TimeoutError: ResourceRequest timed out after 15000ms`,
-    resolution_steps: [
-      "Scale up connection pool limit MAX_CONNECTIONS from 50 to 250 in user-db (Postgres) environment config.",
-      "Implement aggressive write-behind caching on redis-cache to alleviate redundant db queries.",
-      "Restart auth-service instances to flush orphaned socket allocations."
-    ]
+    incident_id: "PM-AWS-S3-2017",
+    company: "Amazon Web Services (AWS)",
+    title: "S3 US-EAST-1 Outage and Index Subsystem Failure",
+    date: "2017-02-28",
+    symptoms: "High rates of HTTP 500 and 503 errors on S3 API calls in US-EAST-1. Cascading outages hit dependent services including EC2, EBS, Lambda, and thousands of external websites relying on S3 storage buckets.",
+    root_cause: "An authorized S3 operator executed an automated command-line script to remove a small number of billing servers. A typo in one of the command parameters caused the script to terminate a much larger set of servers than intended, including servers belonging to two critical S3 subsystems: the index subsystem (manages metadata/mappings) and the placement subsystem (allocates new storage slots). Since the subsystems had not been restarted fully in years, the recovery/re-indexing took hours to complete.",
+    resolution: "The billing servers and both the index and placement subsystems had to undergo a slow, sequence-controlled cold start. Safety checks were implemented in CLI provisioning tools to prevent bulk terminations of core subsystem groups, and the S3 index service was split into smaller partition clusters.",
+    remediation_commands: [
+      "# Limit blast radius of server terminations via safety flags",
+      "aws-sre-tool limit-blast-radius --subsystem s3-index --max-terminate-percent 5",
+      "# Trigger sequencial rolling recovery of the indexing cluster",
+      "systemctl restart s3-index-node-01.service --sequence-control=strict"
+    ],
+    severity: "CRITICAL"
   },
   {
-    incident_id: "INC-3392",
-    impacted_service: "redis-cache",
-    dependencies: ["auth-service", "payment-service", "api-gateway"],
-    severity: "WARNING",
-    timestamp: "2026-05-27T17:15:00Z",
-    root_cause_summary: "Redis cache memory policy was set to noeviction instead of volatile-lru. High session data volume caused cache to exhaust memory, rejecting writes. Downstream auth-service fell back to querying user-db synchronously for every session validation, triggering a db bottleneck and slow response times.",
-    error_stack_trace: `RedisError: OOM command not allowed when used memory > 'maxmemory'.
-at RedisClient.sendCommand (/app/node_modules/redis/lib/client.js:104:19)
-at SessionStore.setSession (/app/src/session.ts:89:12)
-[WARNING] Fallback connection to Postgres Database triggered due to cache unavailability.`,
-    resolution_steps: [
-      "Update Redis configuration to set maxmemory-policy volatile-lru or allkeys-lru.",
-      "Increase cluster memory allocation from 2GB to 8GB.",
-      "Flush expired sessions using a background garbage collection job."
-    ]
+    incident_id: "PM-CLOUDFLARE-WAF-2019",
+    company: "Cloudflare",
+    title: "Global Edge WAF CPU Exhaustion and Service Interruption",
+    date: "2019-07-02",
+    symptoms: "HTTP 502 Bad Gateway errors returned globally. Cloudflare edge CPU utilization spiked to 100% on all proxy engines, blocking HTTP request parsing and taking down millions of active web applications worldwide.",
+    root_cause: "A deployment of a new Web Application Firewall (WAF) rule designed to block cross-site scripting (XSS) attacks contained a poorly optimized regular expression: `(?:.*=.*)`. A specific incoming query triggered catastrophic regular expression backtracking, causing the Nginx/Lua regex engine to loop infinitely, pegging all available CPU cores on edge proxy nodes.",
+    resolution: "SREs isolated the faulty WAF rule and executed a global emergency rollback of WAF configurations. The regex engine was modified to enforce strict execution timeouts and compile-time backtracking limits.",
+    remediation_commands: [
+      "# Emergency global bypass of Web Application Firewall (WAF) rules",
+      "cf-edge-cli waf --bypass-ruleset global_xss_block",
+      "# Re-compile and deploy WAF configurations with backtracking thresholds",
+      "cf-waf-compiler --validate-regex-backtracking --max-backtracks 1000 --out /etc/nginx/waf.rules"
+    ],
+    severity: "CRITICAL"
   },
   {
-    incident_id: "INC-4029",
-    impacted_service: "api-gateway",
-    dependencies: ["payment-service"],
-    severity: "CRITICAL",
-    timestamp: "2026-05-27T16:02:00Z",
-    root_cause_summary: "A third-party webhook payment provider experienced latency degradation (averaging 12.5s). The payment-service did not have an active circuit breaker, causing the main Event Loop to block waiting for third-party promises. This backpressure timed out the api-gateway's 5-second HTTP socket threshold.",
-    error_stack_trace: `[gateway-proxy] ERROR: Downstream connection timeout [payment-service]
-HTTP/1.1 504 Gateway Timeout
-upstream_connect_time: -
-upstream_response_time: 5.003
-upstream_status: 504`,
-    resolution_steps: [
-      "Inject a circuit breaker configuration (opossum/resilience4j) on payment-service calls to downstream providers with a 2-second timeout and 10% error threshold.",
-      "Route degraded payment verification requests to an asynchronous dead-letter queue (DLQ) for retries.",
-      "Return a user-friendly 202 Accepted pending status instead of blocking HTTP calls."
-    ]
+    incident_id: "PM-GITLAB-DB-2017",
+    company: "GitLab",
+    title: "Accidental Production Database Deletion and Multi-Backup Restore Failures",
+    date: "2017-01-31",
+    symptoms: "Complete GitLab.com site offline. Primary database directory vanished, all API and web requests throwing database connection failures. 6 hours of user production data (repos, issues, comments) permanently deleted.",
+    root_cause: "A tired sysadmin attempting to fix a lagging staging replica database accidentally ran `rm -rf` on the production PostgreSQL directory `/var/opt/gitlab/postgresql/data` of the primary database server instead of the staging replica. Subsequent investigation revealed that five redundant backup mechanisms (pg_dump, Azure snapshotting, LVM snapshots, S3 sync) had silently been failing due to permission issues, mismatched PostgreSQL version binaries, or unmonitored cron jobs.",
+    resolution: "SREs manually reconstructed the database using a 6-hour-old staging db snapshot, re-synced orphaned Git repositories, and overhauled back-up automation with active heartbeat monitoring and automated test-restoration dry-runs.",
+    remediation_commands: [
+      "# Check PostgreSQL database size and configuration paths",
+      "pg_controldata -D /var/opt/gitlab/postgresql/data",
+      "# Re-initialize WAL archival syncing and verify backup stream integrity",
+      "pg_basebackup -h primary-db -D /var/opt/gitlab/postgresql/data -U replication --wal-method=stream"
+    ],
+    severity: "CRITICAL"
   },
   {
-    incident_id: "INC-5512",
-    impacted_service: "user-db",
-    dependencies: ["auth-service", "api-gateway"],
-    severity: "CRITICAL",
-    timestamp: "2026-05-27T15:30:00Z",
-    root_cause_summary: "A parallel update of user profiles and authentication tokens was executed without consistent row indexing order. Transaction A locked row 105 (profile) and waited for row 106 (token), while Transaction B locked row 106 and waited for row 105. PostgreSQL aborted both transactions after a 10s deadlock threshold.",
-    error_stack_trace: `ERROR: deadlock detected
-DETAIL: Process 19448 waits for ShareLock on transaction 820128; blocked by process 19521.
-Process 19521 waits for ShareLock on transaction 820119; blocked by process 19448.
-HINT: See server log for query details.`,
-    resolution_steps: [
-      "Enforce uniform lock ordering across profiles and tokens queries in database transaction logic.",
-      "Lower PostgreSQL deadlock_timeout from 10s to 1s to fail-fast.",
-      "Implement automatic exponential backoff retry interceptors in the auth-service database client."
-    ]
+    incident_id: "PM-GITHUB-DB-2018",
+    company: "GitHub",
+    title: "Database Failover, Split-Brain and Write Block Outage",
+    date: "2018-10-21",
+    symptoms: "Storefront and repository dashboards showing database read-only blocks. Users unable to commit code, merge pull requests, or authenticate. Outage lasted 24 hours.",
+    root_cause: "During routine network maintenance replacing a pair of optical fiber switches, a brief 43-second network split occurred between GitHub's primary database cluster and its remote replicas. The orchestrator (database high-availability manager) initiated an automated failover, promoting a replica in a secondary data center to primary. However, the replica was slightly out-of-sync. When the network split resolved, the old primary continued writing while the new primary accepted new connections, causing a classic database split-brain scenario.",
+    resolution: "SREs blocked database writes, manually reconciliated out-of-sync transaction logs, and re-synchronized the replica nodes to the designated master before unlocking writes. Automated failover triggers were updated to require quorum checks across multiple distinct availability zones.",
+    remediation_commands: [
+      "# Query database cluster topology and check replication lag",
+      "orchestrator-client -c discover -i db-primary-01.github.net",
+      "# Block all database writes on out-of-sync database clusters",
+      "mysql -e 'SET GLOBAL read_only = 1;'"
+    ],
+    severity: "MAJOR"
   },
   {
-    incident_id: "INC-1104",
-    impacted_service: "payment-service",
-    dependencies: ["api-gateway"],
-    severity: "WARNING",
-    timestamp: "2026-05-27T14:10:00Z",
-    root_cause_summary: "A malfunctioning client-side infinite loop sent thousands of duplicate checkout requests in a 1-minute window, exceeding the external payment processor's rate limits. The processor blocked the service API key, leading to cascading checkout failures across the entire storefront.",
-    error_stack_trace: `HTTP/1.1 429 Too Many Requests
-Retry-After: 3600
-[payment-service] ERROR: Stripe API Key rate-limited. External request rejected.
-at StripeAPI.charge (/app/src/stripe.ts:54:12)`,
-    resolution_steps: [
-      "Implement Redis-based distributed rate limiting at the api-gateway level (Token Bucket, 60 requests/min per IP).",
-      "Update client app to reject duplicate checkout submissions using form idempotency tokens.",
-      "Request immediate rate limit reset and whitelist from the payment processor support."
-    ]
+    incident_id: "PM-GOOGLE-LB-2014",
+    company: "Google",
+    title: "Global Load Balancer Blackhole Configuration Outage",
+    date: "2014-04-18",
+    symptoms: "Google search, Gmail, YouTube, and Google Cloud services unreachable globally. Users received 502/504 errors, and DNS requests were dropped or timed out.",
+    root_cause: "Google deployed an update to its global software-defined load balancer (GSLB) configuration. A bug in the configuration translation tool failed to parse empty fields in a routing block correctly. It generated a configuration that instructed edge routers to blackhole all incoming HTTP/HTTPS traffic by setting the default route interface to null, dropping packet telemetry immediately.",
+    resolution: "The GSLB control plane executed a automatic emergency fallback to the previous known-good configuration. GSLB compilers were updated with static safety assertions to prevent null-route assignments.",
+    remediation_commands: [
+      "# Check router default route tables for blackhole routes",
+      "ip route show | grep null",
+      "# Force rollback GSLB configuration to the previous validated epoch",
+      "gslb-control-client rollback --target-epoch 80112 --force"
+    ],
+    severity: "CRITICAL"
   }
 ];

@@ -6,42 +6,53 @@ import {
   Terminal as TerminalIcon, 
   Send, 
   Activity, 
-  Database, 
-  Cpu, 
   Play, 
   RefreshCw, 
   Layers, 
   ShieldAlert,
-  Clock
+  Clock,
+  Search,
+  BookOpen,
+  GitBranch,
+  Network
 } from "lucide-react";
-import { microservices as initialMicroservices, serviceDependencies } from "@/data/incidentData";
+import { postMortemsDatabase } from "@/data/incidentData";
+import { queryPostMortems, RAGMatch } from "@/data/ragEngine";
 
 interface Message {
   role: "user" | "assistant";
   content: string;
 }
 
-export default function SreDashboard() {
-  const [services, setServices] = useState(initialMicroservices);
-  const [selectedNode, setSelectedNode] = useState<string | null>("api-gateway");
+export default function SreRAGDashboard() {
+  const [dbSearch, setDbSearch] = useState("");
+  const [selectedIncidentId, setSelectedIncidentId] = useState<string | null>("PM-AWS-S3-2017");
+  const [activeQuery, setActiveQuery] = useState("");
+  const [isStreaming, setIsStreaming] = useState(false);
+  
+  // Real-time RAG tracking state
+  const [ragMatches, setRagMatches] = useState<RAGMatch[]>([]);
+  
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "assistant",
-      content: `### 🛰️ SRE WAR ROOM INITIATED
-Welcome SRE. I am your generative Diagnostic Copilot. I hold the complete incident history and microservice dependency database in memory.
+      content: `### 🛰️ SRE RAG WAR ROOM INITIATED
+Welcome. I am your Retrieval-Augmented Diagnostic Copilot. 
 
-**Operational Status**: ACTIVE.
-Select a **Quick Outage Simulation** below or type an alert message to perform cross-service cascade root-cause analysis (RCA) and generate a mitigation script.`
+**Memory Cache**: Connected to Dan Luu's historical post-mortem engineering database.
+Submit an active system failure log or click one of the **Incident Simulation Triggers** below. 
+
+I will mathematically index the symptoms, retrieve the most relevant historical reports, and stream a comprehensive root-cause analysis with terminal rollback commands.`
     }
   ]);
-  const [input, setInput] = useState("");
-  const [isStreaming, setIsStreaming] = useState(false);
+  
   const [terminalAlerts, setTerminalAlerts] = useState<string[]>([
-    "[SYSTEM] War Room console successfully attached to kubernetes cluster namespace: production",
-    "[INFO] Streaming metrics telemetry established on web socket channel: #sys-logs",
-    "INFO: user-db pg_stat_activity shows 48/50 active client sessions",
-    "CRITICAL: user-db aborted transaction due to parallel row locks (Deadlock)"
+    "[SYSTEM] SRE RAG Memory index generated successfully (5 post-mortem records cached)",
+    "[INFO] Cosine similarity vector dimensions mapped on namespace: production-logs",
+    "INFO: Global Edge proxy reporting healthy CPU averages (2.4%)",
+    "INFO: S3 US-EAST-1 storage engine heartbeat validated"
   ]);
+  
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll chat
@@ -49,112 +60,96 @@ Select a **Quick Outage Simulation** below or type an alert message to perform c
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isStreaming]);
 
-  // Live Scrolling alerts simulation
+  // Live alerts ticker simulator
   useEffect(() => {
     const alertTemplates = [
-      "CRITICAL: api-gateway latency spiked to 4.2s (Threshold 500ms)",
-      "WARN: redis-cache memory utilization is at 98.4%",
-      "INFO: user-db pg_stat_activity shows 48/50 active client sessions",
-      "WARN: payment-service returned 504 on endpoint /v2/charge",
-      "CRITICAL: user-db aborted transaction due to parallel row locks (Deadlock)",
-      "INFO: auth-service cluster auto-scaled from 3 to 6 pods successfully",
-      "CRITICAL: payment-service rate limit tripped by Stripe API client (HTTP 429)",
-      "INFO: Garbage collection executed on redis-cache, freed 142MB allocations",
+      "INFO: Automated backup validation routine check: PASS",
+      "WARN: GitLab replication lag metrics spiked to 12.8s",
+      "CRITICAL: Cloudflare WAF compiler reports 18 regex complexity warnings",
+      "INFO: Database failover orchestrator state set to: PRIMARY_ACTIVE",
+      "WARN: GSLB DNS route propagation average latency is 80ms",
+      "INFO: WAL archiver successfully synced 28 segments to AWS S3 storage",
     ];
 
     const interval = setInterval(() => {
       const randomAlert = alertTemplates[Math.floor(Math.random() * alertTemplates.length)];
       const timestamp = new Date().toISOString().substring(11, 19);
       setTerminalAlerts(prev => [...prev.slice(-30), `[${timestamp}] ${randomAlert}`]);
-    }, 4500);
+    }, 5000);
 
     return () => clearInterval(interval);
   }, []);
 
-  // Update topology states based on simulated outage
-  const triggerSimulation = async (incidentId: string, alertQuery: string) => {
-    
-    // Determine the cascading failure path to highlight visually
-    const updatedServices = initialMicroservices.map(s => {
-      if (incidentId === "INC-8021") {
-        // DB Pool Exhaustion on user-db
-        if (s.id === "user-db") return { ...s, status: "critical" };
-        if (s.id === "auth-service") return { ...s, status: "critical" };
-        if (s.id === "api-gateway") return { ...s, status: "warning" };
-      } else if (incidentId === "INC-3392") {
-        // Redis Eviction Storm
-        if (s.id === "redis-cache") return { ...s, status: "critical" };
-        if (s.id === "auth-service") return { ...s, status: "warning" };
-      } else if (incidentId === "INC-4029") {
-        // API Gateway 504 Timeout from downstream payment provider
-        if (s.id === "api-gateway") return { ...s, status: "critical" };
-        if (s.id === "payment-service") return { ...s, status: "warning" };
-      } else if (incidentId === "INC-5512") {
-        // Auth DB Row Deadlock
-        if (s.id === "user-db") return { ...s, status: "critical" };
-        if (s.id === "auth-service") return { ...s, status: "critical" };
-      } else if (incidentId === "INC-1104") {
-        // Stripe Rate Limiting
-        if (s.id === "payment-service") return { ...s, status: "critical" };
-        if (s.id === "api-gateway") return { ...s, status: "warning" };
-      }
-      return { ...s, status: "healthy" };
-    });
+  // Update RAG scoring in real-time as the operator types/queries
+  const handleQueryChange = (text: string) => {
+    setActiveQuery(text);
+    if (text.trim().length > 3) {
+      const matches = queryPostMortems(text, postMortemsDatabase);
+      setRagMatches(matches);
+    } else {
+      setRagMatches([]);
+    }
+  };
 
-    setServices(updatedServices);
+  // Trigger a full diagnostic analysis
+  const triggerInvestigation = async (queryText: string) => {
+    if (!queryText.trim()) return;
+
+    setActiveQuery(queryText);
     
-    // Add dynamic log to terminal alerts
+    // 1. Run local RAG Engine to extract top matching post-mortems
+    const matches = queryPostMortems(queryText, postMortemsDatabase);
+    setRagMatches(matches);
+
+    // Retrieve only top matching context (>0.05 score) to avoid feeding noisy contexts
+    const retrievedContexts = matches
+      .filter(m => m.score > 0.04)
+      .slice(0, 3)
+      .map(m => m.postMortem);
+
+    // Add alert to terminal
     const timestamp = new Date().toISOString().substring(11, 19);
+    const topMatch = matches[0]?.score > 0.04 ? matches[0] : null;
+    
     setTerminalAlerts(prev => [
       ...prev,
-      `[${timestamp}] 🛑 OUTAGE SIMULATION ACTIVATED: ${incidentId}`,
-      `[${timestamp}] CRITICAL: Topology metrics update dispatched to all edge nodes.`
+      `[${timestamp}] 🔎 RAG ENGINE QUERY DISPATCHED: "${queryText.substring(0, 40)}..."`,
+      topMatch 
+        ? `[${timestamp}] ✅ RAG RETRIEVAL MATCHED: ${topMatch.postMortem.incident_id} (${Math.round(topMatch.score * 100)}% relevance)`
+        : `[${timestamp}] ⚠ RAG RETRIEVAL: No high-relevance matches found in historical database.`
     ]);
 
-    // Send query to Gemini API
-    await handleSubmitChat(alertQuery);
-  };
-
-  const handleResetTopology = () => {
-    setServices(initialMicroservices.map(s => ({ ...s, status: "healthy" })));
-    setMessages(prev => [
-      ...prev,
-      { role: "assistant", content: "♻️ **System topology and metric configurations reset to clean production state.** All node telemetry is reported as HEALTHY." }
-    ]);
-  };
-
-  const handleSubmitChat = async (customPrompt?: string) => {
-    const textToSend = customPrompt || input;
-    if (!textToSend.trim()) return;
-
-    if (!customPrompt) setInput("");
-
+    // 2. Prepare chat message history
     const newMessages: Message[] = [
       ...messages,
-      { role: "user", content: textToSend }
+      { role: "user", content: queryText }
     ];
     setMessages(newMessages);
     setIsStreaming(true);
 
     try {
+      // 3. Dispatch payload with dynamic retrieved post-mortem contexts
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: newMessages }),
+        body: JSON.stringify({ 
+          messages: newMessages,
+          retrievedContexts: retrievedContexts
+        }),
       });
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to process message");
+        throw new Error(errorData.error || "Failed to parse streaming diagnostics.");
       }
 
-      // Read readable stream chunks
+      // Read reader stream chunks
       const reader = response.body?.getReader();
       const decoder = new TextDecoder();
       let done = false;
       let assistantResponse = "";
 
-      // Initialize assistant stream message slot
+      // Add slot for copilot response
       setMessages(prev => [...prev, { role: "assistant", content: "" }]);
 
       while (!done && reader) {
@@ -163,7 +158,7 @@ Select a **Quick Outage Simulation** below or type an alert message to perform c
         if (value) {
           const chunk = decoder.decode(value, { stream: !done });
           assistantResponse += chunk;
-          // Update the last message in place
+          
           setMessages(prev => [
             ...prev.slice(0, -1),
             { role: "assistant", content: assistantResponse }
@@ -173,12 +168,12 @@ Select a **Quick Outage Simulation** below or type an alert message to perform c
 
     } catch (err) {
       console.error(err);
-      const errorMessage = err instanceof Error ? err.message : "An unexpected streaming error occurred";
+      const errMsg = err instanceof Error ? err.message : "Unexpected connection loss to Gemini engine.";
       setMessages(prev => [
         ...prev,
         { 
           role: "assistant", 
-          content: `❌ **Diagnostic Failure**: ${errorMessage}. Ensure GEMINI_API_KEY is configured in your project.` 
+          content: `❌ **Diagnostic Timeout**: ${errMsg}. Ensure GEMINI_API_KEY is configured in your project environment.`
         }
       ]);
     } finally {
@@ -186,48 +181,52 @@ Select a **Quick Outage Simulation** below or type an alert message to perform c
     }
   };
 
-  // Node position coordinates for SVG drawing
-  const nodePositions: Record<string, { x: number; y: number }> = {
-    "api-gateway": { x: 50, y: 15 },
-    "auth-service": { x: 25, y: 45 },
-    "payment-service": { x: 75, y: 45 },
-    "redis-cache": { x: 50, y: 65 },
-    "user-db": { x: 25, y: 85 },
-    "payment-db": { x: 75, y: 85 },
+  const handleResetWorkspace = () => {
+    setActiveQuery("");
+    setRagMatches([]);
+    setMessages([
+      {
+        role: "assistant",
+        content: `### ♻️ COGNITIVE WORKSPACE FLUSHED
+Retrieval similarity scores reset. The War Room console is ready for a new active alert.`
+      }
+    ]);
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "critical": return "text-rose-500 border-rose-500 bg-rose-950/40 glow-critical";
-      case "warning": return "text-amber-500 border-amber-500 bg-amber-950/40 glow-warning";
-      default: return "text-emerald-400 border-emerald-500/50 bg-emerald-950/20 glow-healthy";
-    }
-  };
+  // Filter post-mortems list based on search query
+  const filteredDatabase = postMortemsDatabase.filter(pm => 
+    pm.company.toLowerCase().includes(dbSearch.toLowerCase()) ||
+    pm.title.toLowerCase().includes(dbSearch.toLowerCase()) ||
+    pm.incident_id.toLowerCase().includes(dbSearch.toLowerCase()) ||
+    pm.root_cause.toLowerCase().includes(dbSearch.toLowerCase())
+  );
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "critical": return <span className="px-2 py-0.5 text-xs font-bold rounded bg-rose-900/50 text-rose-300 animate-pulse border border-rose-600">CRITICAL</span>;
-      case "warning": return <span className="px-2 py-0.5 text-xs font-bold rounded bg-amber-900/50 text-amber-300 animate-pulse border border-amber-600">WARNING</span>;
-      default: return <span className="px-2 py-0.5 text-xs font-bold rounded bg-emerald-900/40 text-emerald-300 border border-emerald-600">HEALTHY</span>;
-    }
-  };
+  const selectedIncident = postMortemsDatabase.find(pm => pm.incident_id === selectedIncidentId);
 
-  const currentInspectorNode = services.find(s => s.id === selectedNode);
+  // Position coordinates for the RAG network node visualization
+  const graphNodes = [
+    { id: "query", name: "ACTIVE ALERT QUERY", x: 50, y: 50, role: "center" },
+    { id: "PM-AWS-S3-2017", name: "AWS S3 Outage", x: 20, y: 20 },
+    { id: "PM-CLOUDFLARE-WAF-2019", name: "Cloudflare WAF", x: 80, y: 20 },
+    { id: "PM-GITLAB-DB-2017", name: "GitLab rm -rf", x: 15, y: 75 },
+    { id: "PM-GITHUB-DB-2018", name: "GitHub Split-Brain", x: 85, y: 75 },
+    { id: "PM-GOOGLE-LB-2014", name: "Google GSLB Config", x: 50, y: 12 },
+  ];
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100 cyber-grid crt-overlay relative p-4 flex flex-col justify-between">
       
-      {/* HEADER SECTION & ALERT terminal TICKER */}
+      {/* HEADER BAR & SCROLLING ticker */}
       <header className="border border-slate-800 bg-slate-900/70 backdrop-blur-md rounded-lg p-3 mb-4 shadow-2xl relative overflow-hidden scanline-effect">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-2 mb-2">
           <div className="flex items-center gap-3">
             <div className="w-3 h-3 rounded-full bg-emerald-500 animate-ping" />
             <h1 className="text-xl md:text-2xl font-black tracking-widest text-emerald-400 font-mono uppercase flex items-center gap-2">
               <Activity className="w-6 h-6 text-emerald-500" />
-              SRE War Room Dashboard
+              SRE RAG Investigation Dashboard
             </h1>
             <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-1 rounded border border-slate-700 font-mono hidden sm:inline">
-              V2.5-FLASH
+              RAG ENGINE V1.0
             </span>
           </div>
 
@@ -237,20 +236,20 @@ Select a **Quick Outage Simulation** below or type an alert message to perform c
               SYSTEM TIME UTC: {new Date().toISOString().substring(11, 19)}
             </span>
             <button 
-              onClick={handleResetTopology}
+              onClick={handleResetWorkspace}
               className="flex items-center gap-1.5 px-3 py-1 bg-slate-800 border border-slate-700 rounded hover:bg-emerald-500/20 hover:border-emerald-500 hover:text-emerald-400 transition-all font-bold cursor-pointer"
             >
               <RefreshCw className="w-3 h-3" />
-              FLUSH TOPOLOGY
+              RESET CONSOLE
             </button>
           </div>
         </div>
 
         {/* Real-time scrolling Alert ticker */}
         <div className="bg-slate-950/90 border border-emerald-900/40 rounded p-2 text-xs font-mono flex items-center gap-3 relative h-10 overflow-hidden">
-          <div className="flex items-center gap-1.5 text-rose-500 font-extrabold uppercase animate-pulse border-r border-slate-800 pr-3 h-full shrink-0">
-            <TerminalIcon className="w-4 h-4" />
-            LIVE TELEMETRY
+          <div className="flex items-center gap-1.5 text-emerald-400 font-extrabold uppercase animate-pulse border-r border-slate-800 pr-3 h-full shrink-0">
+            <TerminalIcon className="w-4 h-4 text-emerald-500" />
+            RAG PIPELINE STREAM
           </div>
           <div className="w-full relative overflow-hidden h-full flex items-center">
             <div className="flex gap-8 whitespace-nowrap animate-[marquee_25s_linear_infinite] hover:[animation-play-state:paused] text-emerald-500/90 cursor-default">
@@ -264,183 +263,265 @@ Select a **Quick Outage Simulation** below or type an alert message to perform c
         </div>
       </header>
 
-      {/* CORE WAR ROOM INTERFACE (SPLIT LAYOUT) */}
+      {/* CORE WORK ROOM LAYOUT SPLIT */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 flex-grow h-auto lg:h-[calc(100vh-170px)]">
         
-        {/* LEFT COLUMN: INTERACTIVE ARCHITECTURE GRAPH (lg:col-span-7) */}
-        <section className="lg:col-span-7 flex flex-col justify-between gap-4 h-full border border-slate-800 bg-slate-900/40 backdrop-blur-sm rounded-lg p-4 shadow-xl overflow-hidden relative">
+        {/* LEFT COLUMN: DAN LUU HISTORICAL POST-MORTEMS DATABASE (lg:col-span-6) */}
+        <section className="lg:col-span-6 flex flex-col justify-between gap-4 h-full border border-slate-800 bg-slate-900/40 backdrop-blur-sm rounded-lg p-4 shadow-xl overflow-hidden relative">
           
           <div className="flex justify-between items-center border-b border-slate-800 pb-2">
             <div className="flex items-center gap-2">
-              <Layers className="w-5 h-5 text-emerald-500" />
+              <BookOpen className="w-5 h-5 text-emerald-500" />
               <h2 className="text-sm font-bold tracking-wider uppercase font-mono text-slate-300">
-                Microservice Topology View
+                Dan Luu Post-Mortem Memory Bank
               </h2>
             </div>
-            <div className="text-[10px] text-slate-400 font-mono">
-              Click node to inspect dependencies
-            </div>
+            <span className="text-[10px] text-slate-400 font-mono bg-slate-900 border border-slate-800 px-2 py-0.5 rounded">
+              Seed Source
+            </span>
           </div>
 
-          {/* TOPOLOGY MAP WORKSPACE */}
-          <div className="relative flex-grow flex items-center justify-center min-h-[300px] lg:min-h-0 bg-slate-950/70 border border-slate-900 rounded-lg p-2 my-2 overflow-hidden">
-            {/* SVG Connecting Lines representing dependency tree */}
-            <svg className="absolute inset-0 w-full h-full pointer-events-none z-0">
-              <defs>
-                <marker id="arrow" viewBox="0 0 10 10" refX="24" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#334155" />
-                </marker>
-                <marker id="arrow-warn" viewBox="0 0 10 10" refX="24" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#d97706" />
-                </marker>
-                <marker id="arrow-critical" viewBox="0 0 10 10" refX="24" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#e11d48" />
-                </marker>
-              </defs>
-              {serviceDependencies.map((dep, idx) => {
-                const start = nodePositions[dep.from];
-                const end = nodePositions[dep.to];
-                if (!start || !end) return null;
+          {/* DATABASE SEARCH BAR */}
+          <div className="flex items-center gap-2 border border-slate-800 bg-slate-950/80 rounded-lg p-2 my-1.5 focus-within:ring-2 focus-within:ring-emerald-500/50">
+            <Search className="w-4 h-4 text-slate-500 shrink-0" />
+            <input 
+              type="text"
+              value={dbSearch}
+              onChange={(e) => setDbSearch(e.target.value)}
+              placeholder="Search historical logs, root causes, or companies..."
+              className="w-full bg-transparent border-0 outline-none text-xs text-slate-300 placeholder-slate-600 font-mono"
+            />
+          </div>
 
-                // Determine if this connection line should be colored based on downstream status
-                const downstreamStatus = services.find(s => s.id === dep.to)?.status;
-                let strokeColor = "#334155";
-                let markerId = "arrow";
-                let strokeDash = "none";
-                let pulseAnim = false;
+          {/* Split Pane inside Left: Top is post-mortem list, Bottom is similarity vector network */}
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-3 flex-grow overflow-hidden h-96 lg:h-0">
+            
+            {/* List block */}
+            <div className="md:col-span-6 overflow-y-auto space-y-2 border border-slate-900 bg-slate-950/60 p-2 rounded-lg">
+              {filteredDatabase.map((pm) => {
+                const isSelected = selectedIncidentId === pm.incident_id;
+                // Calculate match score if activeQuery is present
+                const queryMatch = ragMatches.find(m => m.postMortem.incident_id === pm.incident_id);
+                const scorePct = queryMatch ? Math.round(queryMatch.score * 100) : 0;
 
-                if (downstreamStatus === "critical") {
-                  strokeColor = "#e11d48";
-                  markerId = "arrow-critical";
-                  strokeDash = "4 4";
-                  pulseAnim = true;
-                } else if (downstreamStatus === "warning") {
-                  strokeColor = "#d97706";
-                  markerId = "arrow-warn";
-                  strokeDash = "4 4";
+                return (
+                  <button
+                    key={pm.incident_id}
+                    onClick={() => setSelectedIncidentId(pm.incident_id)}
+                    className={`w-full text-left p-2.5 rounded border transition-all cursor-pointer font-mono text-xs flex flex-col justify-between ${
+                      isSelected 
+                        ? "border-emerald-500 bg-emerald-950/15 text-slate-100" 
+                        : "border-slate-800 bg-slate-900/20 text-slate-400 hover:border-slate-700 hover:text-slate-200"
+                    }`}
+                  >
+                    <div className="flex justify-between items-start w-full border-b border-slate-800/50 pb-1 mb-1">
+                      <span className="font-extrabold text-[10px] text-slate-300">{pm.company}</span>
+                      <span className="text-[9px] text-slate-500">{pm.date}</span>
+                    </div>
+                    <div className="font-bold truncate text-[11px] mb-1.5">
+                      {pm.title}
+                    </div>
+
+                    {/* Match Score Indicator (Visual RAG Telemetry) */}
+                    {scorePct > 4 && (
+                      <div className="flex items-center gap-1.5 text-[9px] text-emerald-400 font-black tracking-wider uppercase animate-pulse">
+                        <Layers className="w-3 h-3" />
+                        RAG Sim: {scorePct}%
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* INTERACTIVE SEMANTIC NETWORK GRAPH */}
+            <div className="md:col-span-6 bg-slate-950/80 border border-slate-900 rounded-lg p-2 relative overflow-hidden flex items-center justify-center min-h-[180px]">
+              
+              <div className="absolute top-2 left-2 flex items-center gap-1.5 text-[9px] font-bold text-slate-500 font-mono">
+                <Network className="w-3.5 h-3.5" />
+                SIMILARITY RELATION NETWORK
+              </div>
+
+              {/* SVG vector edges representing match bounds */}
+              <svg className="absolute inset-0 w-full h-full pointer-events-none z-0">
+                {graphNodes.filter(n => n.id !== "query").map((node, idx) => {
+                  const queryNode = graphNodes.find(n => n.id === "query")!;
+                  
+                  // Compute link thickness and lighting based on active similarity score
+                  const queryMatch = ragMatches.find(m => m.postMortem.incident_id === node.id);
+                  const isHighSim = queryMatch && queryMatch.score > 0.04;
+                  
+                  let strokeColor = "#1e293b";
+                  let strokeWidth = 1;
+                  let strokeDash = "2 4";
+                  
+                  if (isHighSim) {
+                    strokeColor = queryMatch.score > 0.4 ? "#10b981" : "#d97706";
+                    strokeWidth = 2 + queryMatch.score * 3;
+                    strokeDash = "none";
+                  }
+
+                  return (
+                    <line
+                      key={idx}
+                      x1={`${queryNode.x}%`}
+                      y1={`${queryNode.y}%`}
+                      x2={`${node.x}%`}
+                      y2={`${node.y}%`}
+                      stroke={strokeColor}
+                      strokeWidth={strokeWidth}
+                      strokeDasharray={strokeDash}
+                      className={isHighSim ? "animate-pulse" : ""}
+                    />
+                  );
+                })}
+              </svg>
+
+              {/* RAG Nodes */}
+              {graphNodes.map((node) => {
+                const isCenter = node.id === "query";
+                const isSelected = selectedIncidentId === node.id;
+                
+                let nodeStatusStyle = "border-slate-800 bg-slate-900 text-slate-500 scale-90";
+                
+                if (isCenter) {
+                  nodeStatusStyle = activeQuery.trim().length > 3 
+                    ? "border-emerald-400 bg-emerald-950/20 text-emerald-400 glow-healthy" 
+                    : "border-slate-700 bg-slate-900 text-slate-400";
+                } else {
+                  const queryMatch = ragMatches.find(m => m.postMortem.incident_id === node.id);
+                  if (queryMatch && queryMatch.score > 0.04) {
+                    nodeStatusStyle = queryMatch.score > 0.4 
+                      ? "border-emerald-500 bg-emerald-950/30 text-emerald-400 glow-healthy scale-100" 
+                      : "border-amber-500 bg-amber-950/30 text-amber-400 glow-warning scale-95";
+                  } else if (isSelected) {
+                    nodeStatusStyle = "border-slate-600 bg-slate-900 text-slate-200 scale-95 ring-1 ring-slate-600";
+                  }
                 }
 
                 return (
-                  <g key={idx}>
-                    <line
-                      x1={`${start.x}%`}
-                      y1={`${start.y}%`}
-                      x2={`${end.x}%`}
-                      y2={`${end.y}%`}
-                      stroke={strokeColor}
-                      strokeWidth={2}
-                      strokeDasharray={strokeDash}
-                      markerEnd={`url(#${markerId})`}
-                      className={pulseAnim ? "animate-pulse" : ""}
-                    />
-                  </g>
+                  <button
+                    key={node.id}
+                    onClick={() => {
+                      if (!isCenter) setSelectedIncidentId(node.id);
+                    }}
+                    style={{ left: `${node.x}%`, top: `${node.y}%` }}
+                    className={`absolute transform -translate-x-1/2 -translate-y-1/2 p-1.5 rounded-lg border-2 text-[8px] font-mono transition-all z-10 w-20 text-center select-none truncate ${nodeStatusStyle}`}
+                  >
+                    {isCenter ? (
+                      <TerminalIcon className="w-3.5 h-3.5 mx-auto mb-0.5 text-emerald-400" />
+                    ) : (
+                      <Server className="w-3.5 h-3.5 mx-auto mb-0.5" />
+                    )}
+                    <span className="font-extrabold block truncate">{node.name.split(" ")[0]}</span>
+                  </button>
                 );
               })}
-            </svg>
+            </div>
 
-            {/* Nodes layer */}
-            {services.map((node) => {
-              const pos = nodePositions[node.id];
-              const isSelected = selectedNode === node.id;
-              const isDatabase = node.id.includes("db");
-              const isCache = node.id.includes("cache");
-
-              return (
-                <button
-                  key={node.id}
-                  onClick={() => setSelectedNode(node.id)}
-                  style={{ left: `${pos.x}%`, top: `${pos.y}%` }}
-                  className={`absolute transform -translate-x-1/2 -translate-y-1/2 flex flex-col items-center p-3 rounded-lg border-2 text-xs font-mono transition-all z-10 select-none cursor-pointer w-32 ${getStatusColor(node.status)} ${isSelected ? "scale-110 border-emerald-400 bg-slate-900 ring-2 ring-emerald-400/50" : ""}`}
-                >
-                  <div className="mb-1 text-slate-300">
-                    {isDatabase ? (
-                      <Database className="w-5 h-5" />
-                    ) : isCache ? (
-                      <Cpu className="w-5 h-5 text-indigo-400" />
-                    ) : (
-                      <Server className="w-5 h-5" />
-                    )}
-                  </div>
-                  <div className="font-extrabold text-[10px] uppercase truncate w-full text-center text-slate-200">
-                    {node.name}
-                  </div>
-                  <div className="text-[9px] text-slate-400 mt-0.5 font-light">
-                    {node.host}
-                  </div>
-                </button>
-              );
-            })}
           </div>
 
-          {/* Selected Node details panel */}
-          <div className="border border-slate-800 bg-slate-950/80 rounded-lg p-3 mt-auto shadow-inner text-xs font-mono">
-            {currentInspectorNode ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <div className="flex items-center gap-2 mb-1.5">
-                    <span className="text-emerald-500 font-bold uppercase">📊 Node Inspector:</span>
-                    <span className="text-slate-300 font-extrabold">{currentInspectorNode.name}</span>
+          {/* Selected incident inspection box */}
+          <div className="border border-slate-800 bg-slate-950/80 rounded-lg p-3 shadow-inner text-xs font-mono">
+            {selectedIncident ? (
+              <div className="flex flex-col gap-2.5 max-h-[160px] overflow-y-auto">
+                <div className="flex justify-between items-center border-b border-slate-900 pb-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-emerald-500 font-extrabold uppercase text-[10px]">🔎 Memory Core:</span>
+                    <span className="text-slate-200 font-black truncate">{selectedIncident.company}</span>
                   </div>
-                  <p className="text-slate-400 text-[11px] mb-2 leading-relaxed">
-                    <strong>Service Role:</strong> {currentInspectorNode.role}
-                  </p>
-                  <div className="flex items-center gap-1.5">
-                    <strong>Operational Status:</strong>
-                    {getStatusBadge(currentInspectorNode.status)}
-                  </div>
+                  <span className="px-2 py-0.5 text-[9px] font-bold rounded bg-rose-900/30 text-rose-400 border border-rose-900/50">
+                    {selectedIncident.severity}
+                  </span>
+                </div>
+                
+                <div className="text-[11px] text-slate-300 leading-relaxed font-sans">
+                  <strong>Outage Summary:</strong> {selectedIncident.title} ({selectedIncident.date})
                 </div>
 
-                <div className="border-t sm:border-t-0 sm:border-l border-slate-800 pt-2 sm:pt-0 sm:pl-4">
-                  <span className="text-emerald-500 font-bold block mb-1">🔗 DEPENDENCIES:</span>
-                  <div className="flex flex-col gap-1 text-[11px]">
-                    <div>
-                      <strong className="text-slate-400">Depends On:</strong>{" "}
-                      {serviceDependencies.filter(d => d.from === currentInspectorNode.id).map(d => d.to).join(", ") || "None"}
+                <div className="text-[11px] text-slate-400 leading-relaxed font-sans">
+                  <strong>Symptom Logs:</strong> {selectedIncident.symptoms}
+                </div>
+
+                <div className="text-[11px] text-slate-400 leading-relaxed font-sans border-t border-slate-900/50 pt-1">
+                  <strong>Root Cause:</strong> {selectedIncident.root_cause}
+                </div>
+
+                <div className="text-[11px] text-emerald-400/90 leading-relaxed font-sans border-t border-slate-900/50 pt-1">
+                  <strong>Historical Resolution:</strong> {selectedIncident.resolution}
+                </div>
+
+                <div className="bg-slate-950 p-2 rounded border border-slate-900 font-mono text-[9px] text-slate-400 space-y-1 mt-1 select-text">
+                  <strong className="text-emerald-500 block mb-1">📟 REMEDIATION CLI:</strong>
+                  {selectedIncident.remediation_commands.map((cmd, cIdx) => (
+                    <div key={cIdx} className={cmd.startsWith("#") ? "text-slate-600 italic" : "text-emerald-500/90"}>
+                      {cmd}
                     </div>
-                    <div>
-                      <strong className="text-slate-400">Required By:</strong>{" "}
-                      {serviceDependencies.filter(d => d.to === currentInspectorNode.id).map(d => d.from).join(", ") || "None"}
-                    </div>
-                  </div>
+                  ))}
                 </div>
               </div>
             ) : (
               <div className="text-center text-slate-500">
-                Click any network node to display service metrics and dependency traces.
+                Select an outage record from the memory bank to inspect deep infrastructure symptoms.
               </div>
             )}
           </div>
         </section>
 
-        {/* RIGHT COLUMN: STREAMING DIAGNOSTIC CHAT PANEL (lg:col-span-5) */}
-        <section className="lg:col-span-5 flex flex-col justify-between h-full border border-slate-800 bg-slate-900/60 backdrop-blur-md rounded-lg p-4 shadow-xl relative overflow-hidden">
+        {/* RIGHT COLUMN: RAG INVESTIGATION CONSOLE & STREAMING CHAT (lg:col-span-6) */}
+        <section className="lg:col-span-6 flex flex-col justify-between h-full border border-slate-800 bg-slate-900/60 backdrop-blur-md rounded-lg p-4 shadow-xl relative overflow-hidden">
           
           <div className="flex justify-between items-center border-b border-slate-800 pb-2 mb-3">
             <div className="flex items-center gap-2">
               <TerminalIcon className="w-5 h-5 text-emerald-500" />
               <h2 className="text-sm font-bold tracking-wider uppercase font-mono text-slate-300 flex items-center gap-2">
-                Diagnostic Copilot Feed
+                Incident Copilot Investigation
                 {isStreaming && <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />}
               </h2>
             </div>
-            <span className="text-[10px] text-slate-400 font-mono">
-              System Memory Connected
+            <span className="text-[10px] text-slate-400 font-mono flex items-center gap-1">
+              <GitBranch className="w-3.5 h-3.5 text-emerald-500" />
+              RAG ACTIVE
             </span>
           </div>
 
-          {/* CHAT DISPLAY */}
-          <div className="flex-grow overflow-y-auto bg-slate-950/80 border border-slate-900 rounded-lg p-3.5 mb-3 font-mono text-xs leading-relaxed space-y-4 max-h-[300px] lg:max-h-none h-96 lg:h-0">
+          {/* RAG similarity retrieval traces */}
+          {ragMatches.some(m => m.score > 0.04) && (
+            <div className="bg-slate-950/80 border border-slate-800 rounded-lg p-2.5 mb-3 font-mono text-[10px] space-y-1.5 animate-fadeIn">
+              <div className="flex items-center gap-1.5 text-emerald-400 font-bold border-b border-slate-900 pb-1 mb-1 uppercase tracking-wider">
+                <Layers className="w-3.5 h-3.5" />
+                RAG Context Matches (Relevance scoring)
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {ragMatches.filter(m => m.score > 0.04).slice(0, 3).map((match, idx) => (
+                  <div key={idx} className="bg-slate-900/70 border border-slate-800/80 rounded p-1.5 flex flex-col gap-0.5">
+                    <span className="font-extrabold text-slate-300 truncate">{match.postMortem.company}</span>
+                    <div className="w-full bg-slate-950 h-1.5 rounded-full overflow-hidden mt-1 border border-slate-800">
+                      <div 
+                        className={`h-full ${match.score > 0.4 ? "bg-emerald-500" : "bg-amber-500"}`} 
+                        style={{ width: `${match.score * 100}%` }} 
+                      />
+                    </div>
+                    <span className="text-[8px] text-slate-500 font-mono mt-0.5 text-right">{Math.round(match.score * 100)}% match</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* CHAT LOG DISPLAY */}
+          <div className="flex-grow overflow-y-auto bg-slate-950/80 border border-slate-900 rounded-lg p-3.5 mb-3 font-mono text-xs leading-relaxed space-y-4 max-h-[300px] lg:max-h-none h-80 lg:h-0">
             {messages.map((msg, idx) => (
               <div 
                 key={idx} 
                 className={`p-3 rounded border ${msg.role === "user" ? "border-emerald-500/20 bg-emerald-950/10 text-slate-200" : "border-slate-800/80 bg-slate-900/40 text-emerald-400/90"}`}
               >
                 <div className="flex justify-between items-center mb-1 text-[9px] text-slate-500 font-bold border-b border-slate-800/50 pb-1">
-                  <span>{msg.role === "user" ? "👤 OPERATOR QUERY" : "🤖 DIAGNOSTIC COPILOT"}</span>
+                  <span>{msg.role === "user" ? "👤 INCIDENT LOG QUERY" : "🤖 SRE COPILOT SYNTHESIS"}</span>
                   <span>{new Date().toISOString().substring(11, 19)}</span>
                 </div>
                 
-                {/* Parse basic markdown headers, bold, and linebreaks */}
+                {/* Basic markdown parsing */}
                 <div className="space-y-2 whitespace-pre-wrap select-text selection:bg-emerald-500/30">
                   {msg.content.split("\n").map((line, lIdx) => {
                     if (line.startsWith("### ")) {
@@ -449,11 +530,10 @@ Select a **Quick Outage Simulation** below or type an alert message to perform c
                     if (line.startsWith("- ")) {
                       return <div key={lIdx} className="pl-4 text-slate-300 flex items-start gap-1.5"><span className="text-emerald-500">•</span> {line.substring(2)}</div>;
                     }
-                    // Basic bold formatting **text**
                     const formattedLine = line.split("**").map((chunk, cIdx) => 
                       cIdx % 2 === 1 ? <strong key={cIdx} className="text-slate-100 font-black">{chunk}</strong> : chunk
                     );
-                    return <p key={lIdx} className={line.trim().startsWith("INCIDENT CLASSIFICATION") || line.trim().startsWith("CASCADING") || line.trim().startsWith("ROOT CAUSE") || line.trim().startsWith("REMEDIATION") ? "text-emerald-300 font-bold mt-2" : "text-slate-300"}>{formattedLine}</p>;
+                    return <p key={lIdx} className={line.trim().startsWith("INCIDENT CLASSIFICATION") || line.trim().startsWith("RETRIEVAL") || line.trim().startsWith("ROOT CAUSE") || line.trim().startsWith("ACTIONABLE") ? "text-emerald-300 font-bold mt-2" : "text-slate-300"}>{formattedLine}</p>;
                   })}
                 </div>
               </div>
@@ -461,56 +541,56 @@ Select a **Quick Outage Simulation** below or type an alert message to perform c
             {isStreaming && (
               <div className="flex items-center gap-2 text-[10px] text-emerald-500/80 italic">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
-                Copilot is streaming root-cause analysis...
+                Copilot matches context and synthesizes diagnostic analysis...
               </div>
             )}
             <div ref={chatEndRef} />
           </div>
 
-          {/* QUICK OUTAGE SIMULATION PANEL */}
+          {/* SIMULATION triggers FOR DAN LUU CASES */}
           <div className="mb-3">
             <span className="text-[10px] font-bold text-slate-400 tracking-wider uppercase font-mono block mb-1.5 flex items-center gap-1">
               <ShieldAlert className="w-3.5 h-3.5 text-amber-500" />
-              Quick Outage Simulation Buttons
+              Historical Incident Simulation Triggers
             </span>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-2 xl:grid-cols-3 gap-2">
               <button 
-                onClick={() => triggerSimulation("INC-8021", "The API Gateway is throwing 504 Gateway Timeouts and users report auth failures. Detect DB pool limits.")}
+                onClick={() => triggerInvestigation("US-EAST-1 s3 buckets returning 500 internal errors, EC2 and Lambda instances failed scaling configurations due to placement subsystems.")}
                 className="px-2 py-1.5 text-[10px] font-bold text-rose-400 hover:text-rose-200 border border-rose-900/60 bg-rose-950/20 hover:bg-rose-900/50 rounded flex items-center gap-1 cursor-pointer transition-all uppercase truncate"
               >
-                <Play className="w-3 h-3 shrink-0" />
-                DB Pool Exhaustion
+                <Play className="w-3 h-3 shrink-0 text-rose-500" />
+                AWS S3 Outage
               </button>
               <button 
-                onClick={() => triggerSimulation("INC-3392", "Session validation failed on auth-service. Redis cache memory logs and DB cascade.")}
+                onClick={() => triggerInvestigation("Nginx proxy nodes spiked CPU load to 100% globally. Bad gateway 502 errors returned globally. Investigate WAF rule regex looping.")}
+                className="px-2 py-1.5 text-[10px] font-bold text-rose-400 hover:text-rose-200 border border-rose-900/60 bg-rose-950/20 hover:bg-rose-900/50 rounded flex items-center gap-1 cursor-pointer transition-all uppercase truncate"
+              >
+                <Play className="w-3 h-3 shrink-0 text-rose-500" />
+                CF WAF Regex Spikes
+              </button>
+              <button 
+                onClick={() => triggerInvestigation("Tired sysadmin deleted production database directory /postgresql/data instead of staging replica. All backups reporting restoration failures.")}
+                className="px-2 py-1.5 text-[10px] font-bold text-rose-400 hover:text-rose-200 border border-rose-900/60 bg-rose-950/20 hover:bg-rose-900/50 rounded flex items-center gap-1 cursor-pointer transition-all uppercase truncate"
+              >
+                <Play className="w-3 h-3 shrink-0 text-rose-500" />
+                GitLab DB Deletion
+              </button>
+              <button 
+                onClick={() => triggerInvestigation("Fiber network switch failure caused database replication network splits, orchestrator initiated master failover to out-of-sync standby, database locks writes.")}
                 className="px-2 py-1.5 text-[10px] font-bold text-amber-400 hover:text-amber-200 border border-amber-900/60 bg-amber-950/20 hover:bg-amber-900/50 rounded flex items-center gap-1 cursor-pointer transition-all uppercase truncate"
               >
-                <Play className="w-3 h-3 shrink-0" />
-                Redis Cache Eviction
+                <Play className="w-3 h-3 shrink-0 text-amber-500" />
+                GitHub Split-Brain
               </button>
               <button 
-                onClick={() => triggerSimulation("INC-4029", "A payment service webhook callback is timing out. Cascade to API gateway and user clients.")}
+                onClick={() => triggerInvestigation("Google search and gmail services unreachable, DNS packets dropped on edge proxy routers, checking routing configuration assign null routes.")}
                 className="px-2 py-1.5 text-[10px] font-bold text-rose-400 hover:text-rose-200 border border-rose-900/60 bg-rose-950/20 hover:bg-rose-900/50 rounded flex items-center gap-1 cursor-pointer transition-all uppercase truncate"
               >
-                <Play className="w-3 h-3 shrink-0" />
-                Gateway 504 Timeout
+                <Play className="w-3 h-3 shrink-0 text-rose-500" />
+                Google GSLB Routing
               </button>
               <button 
-                onClick={() => triggerSimulation("INC-5512", "Postgres user-db deadlocks. Explain locking order on auth token updates.")}
-                className="px-2 py-1.5 text-[10px] font-bold text-rose-400 hover:text-rose-200 border border-rose-900/60 bg-rose-950/20 hover:bg-rose-900/50 rounded flex items-center gap-1 cursor-pointer transition-all uppercase truncate"
-              >
-                <Play className="w-3 h-3 shrink-0" />
-                Auth DB Deadlock
-              </button>
-              <button 
-                onClick={() => triggerSimulation("INC-1104", "Storefront is reporting checkout failures. Payment service throws 429 errors from external processor.")}
-                className="px-2 py-1.5 text-[10px] font-bold text-amber-400 hover:text-amber-200 border border-amber-900/60 bg-amber-950/20 hover:bg-amber-900/50 rounded flex items-center gap-1 cursor-pointer transition-all uppercase truncate"
-              >
-                <Play className="w-3 h-3 shrink-0" />
-                Stripe Key Block
-              </button>
-              <button 
-                onClick={handleResetTopology}
+                onClick={handleResetWorkspace}
                 className="px-2 py-1.5 text-[10px] font-bold text-emerald-400 hover:text-emerald-200 border border-emerald-900/60 bg-emerald-950/20 hover:bg-emerald-900/50 rounded flex items-center gap-1 cursor-pointer transition-all uppercase truncate"
               >
                 <RefreshCw className="w-3 h-3 shrink-0 animate-spin" />
@@ -519,23 +599,23 @@ Select a **Quick Outage Simulation** below or type an alert message to perform c
             </div>
           </div>
 
-          {/* CHAT INPUT FORM */}
+          {/* CHAT INPUT PANEL */}
           <form 
-            onSubmit={(e) => { e.preventDefault(); handleSubmitChat(); }}
+            onSubmit={(e) => { e.preventDefault(); triggerInvestigation(activeQuery); }}
             className="flex items-center gap-2 border border-slate-800 bg-slate-950 rounded-lg p-1.5 focus-within:ring-2 focus-within:ring-emerald-500/50 focus-within:border-emerald-500"
           >
             <span className="text-[10px] font-extrabold text-emerald-500 pl-2 select-none shrink-0">
-              SRE-root@war-room:~$
+              SRE-root@RAG-copilot:~$
             </span>
             <input 
               type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Query historical memory or submit alert..."
+              value={activeQuery}
+              onChange={(e) => handleQueryChange(e.target.value)}
+              placeholder="Input system logs / symptoms (WAF, S3, Split-Brain, rm -rf)..."
               disabled={isStreaming}
               className="flex-grow bg-transparent border-0 outline-none text-xs text-slate-100 placeholder-slate-600 font-mono py-1 px-1"
             />
-            {input && <span className="terminal-cursor" />}
+            {activeQuery && <span className="terminal-cursor" />}
             <button 
               type="submit"
               disabled={isStreaming}

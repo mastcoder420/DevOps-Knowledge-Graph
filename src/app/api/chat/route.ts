@@ -1,5 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { mockIncidents } from '@/data/incidentData';
+import { HistoricalPostMortem } from '@/data/incidentData';
 
 export const runtime = 'edge';
 
@@ -8,9 +8,14 @@ interface ChatMessage {
   content: string;
 }
 
+interface ChatRequest {
+  messages: ChatMessage[];
+  retrievedContexts: HistoricalPostMortem[];
+}
+
 export async function POST(req: Request) {
   try {
-    const { messages } = (await req.json()) as { messages: ChatMessage[] };
+    const { messages, retrievedContexts } = (await req.json()) as ChatRequest;
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       return new Response(JSON.stringify({ 
@@ -22,27 +27,44 @@ export async function POST(req: Request) {
     }
 
     const genAI = new GoogleGenerativeAI(apiKey);
+    
+    // Construct rich RAG-augmented system instructions
+    const contextText = retrievedContexts && retrievedContexts.length > 0
+      ? retrievedContexts.map((pm, idx) => `
+[MATCHED HISTORICAL POST-MORTEM #${idx + 1}]
+Company: ${pm.company}
+Title: ${pm.title}
+Date: ${pm.date}
+Symptoms: ${pm.symptoms}
+Root Cause: ${pm.root_cause}
+Resolution: ${pm.resolution}
+Remediation Commands:
+${pm.remediation_commands.join('\n')}
+--------------------------------------------------`).join('\n')
+      : "No highly matching historical post-mortems were retrieved for this specific symptom.";
+
+    const systemInstruction = `You are the SRE War Room Diagnostic AI, a specialized cyber-copilot investigating a live production system failure.
+You use RAG (Retrieval-Augmented Generation) to analyze new outages by cross-referencing them against our historical post-mortem database.
+
+ACTIVE INCIDENT TO INVESTIGATE:
+"${messages[messages.length - 1].content}"
+
+RETRIEVED HISTORICAL CONTEXT:
+${contextText}
+
+YOUR INSTRUCTIONS:
+1. Thoroughly compare the symptoms of the active incident with the retrieved historical post-mortems.
+2. Determine if the active incident correlates with any historical failure (e.g. if the user reports global edge gateway CPU bottlenecks, correlate it with Cloudflare's 2019 WAF regex backtracking outage).
+3. Draft a precise SRE Root Cause Analysis including:
+   - **INCIDENT CLASSIFICATION** (e.g., Extreme CPU Spike on Edge Proxy)
+   - **RETRIEVAL CORRELATION ANALYSIS** (Explain which past post-mortem matched, why, and show the match relevance logic)
+   - **ROOT CAUSE HYPOTHESIS & CASCADE IMPACT** (Step-by-step breakdown of how the failure propagates)
+   - **ACTIONABLE MITIGATION PROTOCOL** (Step-by-step shell commands, queries, or emergency changes to execute immediately based on historical resolutions)
+4. Keep the output highly technical, structured, and formulated in an elite, focused SRE command-center tone.`;
+
     const model = genAI.getGenerativeModel({
       model: "gemini-2.5-flash",
-      systemInstruction: `You are the SRE War Room Diagnostic AI, the "collective engineering memory" of this infrastructure.
-Here is the historical log database of complex microservice outages:
-${JSON.stringify(mockIncidents, null, 2)}
-
-Microservice Topology:
-- api-gateway DEPENDS ON [auth-service, payment-service]
-- auth-service DEPENDS ON [redis-cache, user-db]
-- payment-service DEPENDS ON [redis-cache, payment-db]
-
-When a user submits an alert, error stack trace, or custom query:
-1. Cross-reference their query with the microservice topology and the historical outages.
-2. Identify the cascading path. (e.g., If the user query is about "auth-service locking up," point out that user-db might be experiencing deadlocks or connection pool exhaustion, leading to cascading HTTP 504 errors on the api-gateway).
-3. If the query matches a historical incident, explain the connection.
-4. Stream a professional, clear, highly structured SRE Root Cause Analysis:
-   - **INCIDENT CLASSIFICATION** (e.g., Critical Database Bottleneck)
-   - **CASCADING IMPACT ANALYSIS** (Which services are degraded/blocked based on dependencies)
-   - **ROOT CAUSE DIAGNOSIS** (Detailed explanation of why it failed)
-   - **REMEDIATION COMMANDS** (Actionable step-by-step CLI commands, database adjustments, or config changes)
-5. Maintain a professional, hyper-focused, elite SRE tone.`
+      systemInstruction: systemInstruction
     });
 
     // Format chat history for Gemini:
@@ -91,4 +113,3 @@ When a user submits an alert, error stack trace, or custom query:
     });
   }
 }
-
